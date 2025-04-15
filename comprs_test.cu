@@ -1,8 +1,8 @@
 
-
 #include "../include/GSZ.h"
-#include <__clang_cuda_builtin_vars.h>
+#include "../include/comprs_test.cuh"
 #include <cstddef>
+#include <cstdio>
 #include <iterator>
 #include <stdio.h>
 
@@ -799,7 +799,6 @@ __global__ void GSZ_decompress_kernel_outlier_vec(
   unsigned int thread_ofs = 0;
   uchar4 tmp_char;
   float4 dec_buffer;
-
   // Obtain fixed rate information for each block.
   for (int j = 0; j < block_num; j++) {
     block_idx = warp * dec_chunk + j * 32 + lane;
@@ -1562,10 +1561,8 @@ __global__ void quant_prediction_local(float *const __restrict__ localData,
   const int block_num = cmp_chunk >> 5;   // #n of block which each thread
                                           // handles (1024/32 = 32)
   const float recipPrecision = 0.5f / eb;
-
   int base_start_idx;
   int base_block_start_idx, base_block_end_idx;
-  int block_idx;
   int currQuant, prevQuant;
   // int absQuant[cmp_chunk];           // absQuant[1024];
   // unsigned int sign_flag[block_num]; // sign_flag[32] --> 4 * 8 * 32 = 1024
@@ -1580,7 +1577,6 @@ __global__ void quant_prediction_local(float *const __restrict__ localData,
     base_block_start_idx = base_start_idx + j * 1024 +
                            lane * 32; // every thread handle  32 * 32 elements
     base_block_end_idx = base_block_start_idx + 32;
-    block_idx = base_block_start_idx / 32;
     prevQuant = 0;
 // Operation for each block
 #pragma unroll 8
@@ -1622,13 +1618,11 @@ __global__ void inverse_fixed_length_sum_op(
     const float eb, const size_t nbEle) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
-
   const int tid = threadIdx.x;
   const int bid = blockIdx.x;
   const int idx = bid * blockDim.x + tid;
   const int lane = idx & 0x1f;
   const int warp = idx >> 5; // / 32
-
   const int block_num = dec_chunk >> 5;
   const int rate_ofs = (nbEle + dec_tblock_size * dec_chunk - 1) /
                        (dec_tblock_size * dec_chunk) *
@@ -1636,20 +1630,18 @@ __global__ void inverse_fixed_length_sum_op(
 
   int base_start_idx;
   int base_block_start_idx;
-  int sign_flag_cmp[block_num];
+  unsigned int sign_flag_cmp[block_num];
   int block_idx;
   int maxQuant = 0;
+  unsigned int thread_ofs2 = 0;
   int maxQuan2 = 0;
   int outlier;
   int absQuant[1024];
   int fixed_rate_cmp[block_num];
-  int currQuant, lorenQuant, prevQuant;
-  int sign_ofs;
+  int lorenQuant;
   int fixed_rate[block_num];
   unsigned int thread_ofs = 0;
   uchar4 tmp_char;
-  float4 dec_buffer;
-
   // Obtain fixed rate information for each block.
   for (int j = 0; j < block_num; j++) {
     block_idx = warp * dec_chunk + j * 32 + lane;
@@ -1792,7 +1784,8 @@ __global__ void inverse_fixed_length_sum_op(
         maxQuant = max(maxQuant, lorenQuant);
         outlier = absQuant[j * 32];
         for (int i = 1; i < 32; i++) {
-          sign_flag_cmp[j] |= (predQuant[base_start_idx + i] < 0) << (31 - (i));
+          sign_flag_cmp[j] |= (predQuant[base_block_start_idx + i] < 0)
+                              << (31 - (i));
           lorenQuant = predQuant[base_block_start_idx + i];
           absQuant[j * 32 + i] = abs(lorenQuant);
           maxQuant = max(maxQuant, lorenQuant);
@@ -2260,22 +2253,21 @@ __global__ void inverse_fixed_length_sum_op(
       maxQuant = 0;
 
       signed_value =
-          (sign_flag & (1 << (31))) ? -absQuant[j * 32] : absQuant[j * 32];
-      lorenQuant = signed_value + predQuant[base_block_start_idx + j * 32];
-      sign_flag_cmp[j * 32] |= (lorenQuant < 0) << (31 - ((j * 32) % 32));
+          (sign_flag & (1 << (31))) ? absQuant[j * 32] * -1 : absQuant[j * 32];
+      lorenQuant = signed_value + predQuant[base_block_start_idx];
+      sign_flag_cmp[j * 32] |= (lorenQuant < 0) << 31;
       absQuant[j * 32] = abs(lorenQuant);
       maxQuant = max(maxQuant, absQuant[j * 32]);
       outlier = absQuant[j * 32];
-
       // TODO: unroll
-      for (int i = j * 32 + 1; i < 32; i++) {
-        signed_value =
-            (sign_flag & (1 << (31 - i))) ? -absQuant[i] : absQuant[i];
+      for (int i = 1; i < 32; i++) {
+        signed_value = (sign_flag & (1 << (31 - i))) ? absQuant[j * 32 + i] * -1
+                                                     : absQuant[j * 32 + i];
         lorenQuant = signed_value + predQuant[base_block_start_idx + i];
-        sign_flag_cmp[j * 32] |= (lorenQuant < 0) << (31 - (i % 32));
-        absQuant[i] = abs(lorenQuant);
-        maxQuant = max(maxQuant, absQuant[i]);
-        maxQuan2 = max(maxQuan2, absQuant[i]);
+        sign_flag_cmp[j * 32] |= (lorenQuant < 0) << (31 - i);
+        absQuant[j * 32 + i] = abs(lorenQuant);
+        maxQuant = max(maxQuant, absQuant[j * 32 + i]);
+        maxQuan2 = max(maxQuan2, absQuant[j * 32 + i]);
       }
     }
     int fr1 = get_bit_num(maxQuant);
@@ -2285,29 +2277,30 @@ __global__ void inverse_fixed_length_sum_op(
     int temp_ofs1 = fr1 ? 4 + fr1 * 4 : 0;
     int temp_ofs2 = fr2 ? 4 + fr2 * 4 + outlier : 4 + outlier;
     if (temp_ofs1 <= temp_ofs2) {
-      thread_ofs += temp_ofs1;
+      thread_ofs2 += temp_ofs1;
       temp_rate = fr1;
     } else {
-      thread_ofs += temp_ofs2;
+      thread_ofs2 += temp_ofs2;
       temp_rate = fr2 | 0x80 | ((outlier - 1) << 5);
     }
     fixed_rate_cmp[j] = temp_rate;
-    CmpDataOut[block_idx] = (unsigned char)fixed_rate[j];
+    CmpDataOut[block_idx] = (unsigned char)fixed_rate_cmp[j];
     __syncthreads();
     // Index updating across different iterations.
     cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
   }
+
 #pragma unroll 5
   for (int i = 1; i < 32; i <<= 1) {
-    int tmp = __shfl_up_sync(0xffffffff, thread_ofs, i);
+    int tmp = __shfl_up_sync(0xffffffff, thread_ofs2, i);
     if (lane >= i)
-      thread_ofs += tmp;
+      thread_ofs2 += tmp;
   }
   __syncthreads();
 
   // Write warp(i.e. thread-block)-level prefix-sum to global-memory.
   if (lane == 31) {
-    locOffsetOut[warp + 1] = thread_ofs;
+    locOffsetOut[warp + 1] = thread_ofs2;
     __threadfence();
     if (warp == 0) {
       flag[0] = 2;
@@ -2367,21 +2360,20 @@ __global__ void inverse_fixed_length_sum_op(
     base_idx = excl_sum + rate_ofs;
   __syncthreads();
   base_cmp_byte_ofs = base_idx;
-  cmp_byte_ofs;
   tmp_byte_ofs = 0;
   cur_byte_ofs = 0;
   for (int j = 0; j < block_num; j++) {
     // Initialization, guiding encoding process.
-    int encoding_selection = fixed_rate[j] >> 7;
-    int outlier_byte_num = ((fixed_rate[j] & 0x60) >> 5) + 1;
-    fixed_rate[j] &= 0x1f;
+    int encoding_selection = fixed_rate_cmp[j] >> 7;
+    int outlier_byte_num = ((fixed_rate_cmp[j] & 0x60) >> 5) + 1;
+    fixed_rate_cmp[j] &= 0x1f;
     int chunk_idx_start = j * 32;
 
     // Restore index for j-th iteration.
     if (!encoding_selection)
-      tmp_byte_ofs = (fixed_rate[j]) ? (4 + fixed_rate[j] * 4) : 0;
+      tmp_byte_ofs = (fixed_rate_cmp[j]) ? (4 + fixed_rate_cmp[j] * 4) : 0;
     else
-      tmp_byte_ofs = 4 + outlier_byte_num + fixed_rate[j] * 4;
+      tmp_byte_ofs = 4 + outlier_byte_num + fixed_rate_cmp[j] * 4;
 #pragma unroll 5
     for (int i = 1; i < 32; i <<= 1) {
       int tmp = __shfl_up_sync(0xffffffff, tmp_byte_ofs, i);
@@ -2403,7 +2395,7 @@ __global__ void inverse_fixed_length_sum_op(
       }
 
       // Corner case: all data points except outliers are 0.
-      if (!fixed_rate[j]) {
+      if (!fixed_rate_cmp[j]) {
         CmpDataOut[cmp_byte_ofs++] = 0xff & (sign_flag_cmp[j] >> 24);
         CmpDataOut[cmp_byte_ofs++] = 0xff & (sign_flag_cmp[j] >> 16);
         CmpDataOut[cmp_byte_ofs++] = 0xff & (sign_flag_cmp[j] >> 8);
@@ -2412,7 +2404,7 @@ __global__ void inverse_fixed_length_sum_op(
     }
 
     // Operation for each block, if zero block then do nothing.
-    if (fixed_rate[j]) {
+    if (fixed_rate_cmp[j]) {
       // Padding vector operation for outlier encoding.
       int vec_ofs = cmp_byte_ofs % 4;
       if (vec_ofs == 0) {
@@ -2426,7 +2418,7 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign quant bit information for one block by bit-shuffle.
         int mask = 1;
-        for (int i = 0; i < fixed_rate[j]; i++) {
+        for (int i = 0; i < fixed_rate_cmp[j]; i++) {
           // Initialization.
           tmp_char.x = 0;
           tmp_char.y = 0;
@@ -2526,7 +2518,7 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign quant bit information for one block by bit-shuffle.
         int mask = 1;
-        for (int i = 0; i < fixed_rate[j] - 1; i++) {
+        for (int i = 0; i < fixed_rate_cmp[j] - 1; i++) {
           // Initialization.
           tmp_char.x = 0;
           tmp_char.y = 0;
@@ -2589,21 +2581,29 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign block bit-shuffle, padding part.
         CmpDataOut[cmp_byte_ofs++] =
-            (((absQuant[chunk_idx_start + 24] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 24] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 7) |
-            (((absQuant[chunk_idx_start + 25] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 25] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 6) |
-            (((absQuant[chunk_idx_start + 26] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 26] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 5) |
-            (((absQuant[chunk_idx_start + 27] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 27] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 4) |
-            (((absQuant[chunk_idx_start + 28] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 28] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 3) |
-            (((absQuant[chunk_idx_start + 29] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 29] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 2) |
-            (((absQuant[chunk_idx_start + 30] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 30] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 1) |
-            (((absQuant[chunk_idx_start + 31] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 31] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 0);
       } else if (vec_ofs == 2) {
         // Assign sign information for one block, padding part.
@@ -2640,7 +2640,7 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign quant bit information for one block by bit-shuffle.
         int mask = 1;
-        for (int i = 0; i < fixed_rate[j] - 1; i++) {
+        for (int i = 0; i < fixed_rate_cmp[j] - 1; i++) {
           // Initialization.
           tmp_char.x = 0;
           tmp_char.y = 0;
@@ -2702,38 +2702,54 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign block bit-shuffle, padding part.
         CmpDataOut[cmp_byte_ofs++] =
-            (((absQuant[chunk_idx_start + 16] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 16] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 7) |
-            (((absQuant[chunk_idx_start + 17] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 17] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 6) |
-            (((absQuant[chunk_idx_start + 18] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 18] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 5) |
-            (((absQuant[chunk_idx_start + 19] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 19] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 4) |
-            (((absQuant[chunk_idx_start + 20] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 20] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 3) |
-            (((absQuant[chunk_idx_start + 21] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 21] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 2) |
-            (((absQuant[chunk_idx_start + 22] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 22] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 1) |
-            (((absQuant[chunk_idx_start + 23] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 23] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 0);
         CmpDataOut[cmp_byte_ofs++] =
-            (((absQuant[chunk_idx_start + 24] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 24] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 7) |
-            (((absQuant[chunk_idx_start + 25] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 25] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 6) |
-            (((absQuant[chunk_idx_start + 26] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 26] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 5) |
-            (((absQuant[chunk_idx_start + 27] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 27] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 4) |
-            (((absQuant[chunk_idx_start + 28] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 28] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 3) |
-            (((absQuant[chunk_idx_start + 29] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 29] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 2) |
-            (((absQuant[chunk_idx_start + 30] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 30] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 1) |
-            (((absQuant[chunk_idx_start + 31] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 31] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 0);
       } else {
         // Assign sign information for one block, padding part.
@@ -2762,7 +2778,7 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign quant bit information for one block by bit-shuffle.
         int mask = 1;
-        for (int i = 0; i < fixed_rate[j] - 1; i++) {
+        for (int i = 0; i < fixed_rate_cmp[j] - 1; i++) {
           // Initialization.
           tmp_char.x = 0;
           tmp_char.y = 0;
@@ -2822,57 +2838,80 @@ __global__ void inverse_fixed_length_sum_op(
 
         // Assign block bit-shuffle, padding part.
         CmpDataOut[cmp_byte_ofs++] =
-            (((absQuant[chunk_idx_start + 8] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 8] & mask) >> (fixed_rate_cmp[j] - 1))
              << 7) |
-            (((absQuant[chunk_idx_start + 9] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 9] & mask) >> (fixed_rate_cmp[j] - 1))
              << 6) |
-            (((absQuant[chunk_idx_start + 10] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 10] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 5) |
-            (((absQuant[chunk_idx_start + 11] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 11] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 4) |
-            (((absQuant[chunk_idx_start + 12] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 12] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 3) |
-            (((absQuant[chunk_idx_start + 13] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 13] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 2) |
-            (((absQuant[chunk_idx_start + 14] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 14] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 1) |
-            (((absQuant[chunk_idx_start + 15] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 15] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 0);
         CmpDataOut[cmp_byte_ofs++] =
-            (((absQuant[chunk_idx_start + 16] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 16] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 7) |
-            (((absQuant[chunk_idx_start + 17] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 17] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 6) |
-            (((absQuant[chunk_idx_start + 18] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 18] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 5) |
-            (((absQuant[chunk_idx_start + 19] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 19] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 4) |
-            (((absQuant[chunk_idx_start + 20] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 20] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 3) |
-            (((absQuant[chunk_idx_start + 21] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 21] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 2) |
-            (((absQuant[chunk_idx_start + 22] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 22] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 1) |
-            (((absQuant[chunk_idx_start + 23] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 23] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 0);
         CmpDataOut[cmp_byte_ofs++] =
-            (((absQuant[chunk_idx_start + 24] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 24] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 7) |
-            (((absQuant[chunk_idx_start + 25] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 25] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 6) |
-            (((absQuant[chunk_idx_start + 26] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 26] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 5) |
-            (((absQuant[chunk_idx_start + 27] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 27] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 4) |
-            (((absQuant[chunk_idx_start + 28] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 28] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 3) |
-            (((absQuant[chunk_idx_start + 29] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 29] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 2) |
-            (((absQuant[chunk_idx_start + 30] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 30] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 1) |
-            (((absQuant[chunk_idx_start + 31] & mask) >> (fixed_rate[j] - 1))
+            (((absQuant[chunk_idx_start + 31] & mask) >>
+              (fixed_rate_cmp[j] - 1))
              << 0);
       }
     }
+    cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
   }
 }
