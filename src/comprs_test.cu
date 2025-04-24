@@ -1565,9 +1565,6 @@ __global__ void kernel_quant_prediction(float *const __restrict__ localData,
   int base_start_idx;
   int base_block_start_idx, base_block_end_idx;
   int currQuant, prevQuant;
-  // int absQuant[cmp_chunk];           // absQuant[1024];
-  // unsigned int sign_flag[block_num]; // sign_flag[32] --> 4 * 8 * 32 = 1024
-  // int fixed_rate[block_num];   // fixed_rate[32] --> 4 * 8 * 32 = 1024
   float4 tmp_buffer;
 
   // Prequantization + Lorenzo Prediction + Fixed-length encoding + store
@@ -2362,6 +2359,7 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
   if (!lane)
     base_idx = excl_sum + rate_ofs;
   __syncthreads();
+
   base_cmp_byte_ofs = base_idx;
   tmp_byte_ofs = 0;
   cur_byte_ofs = 0;

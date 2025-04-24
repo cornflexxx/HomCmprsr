@@ -78,7 +78,7 @@ int main() {
   size_t nbEle;
   float *vec = read_data("smooth.in", &nbEle);
   float *vec_local = read_data("smooth.in", &nbEle);
-  float eb = 0.0001;
+  float eb = 1e-4;
   unsigned char *cmpBytes = NULL;
   float *decData;
 
@@ -88,6 +88,16 @@ int main() {
   float *d_decData;
   float *d_vec;
   unsigned char *d_cmpBytes;
+
+  float max_val = vec[0];
+  float min_val = vec[0];
+  for (size_t i = 0; i < nbEle; i++) {
+    if (vec[i] > max_val)
+      max_val = vec[i];
+    else if (vec[i] < min_val)
+      min_val = vec[i];
+  }
+  eb = eb * (max_val - min_val);
 
   cudaStream_t stream;
   cudaStreamCreate(&stream);
@@ -140,6 +150,18 @@ int main() {
 
   write_dataf("output", decData, nbEle);
 
+  int not_bound = 0;
+  int j = 0;
+  for (size_t i = 0; i < nbEle; i += 1) {
+    if (fabs(vec[i] * 2 - decData[i]) > eb * 2.2) {
+      not_bound++;
+    }
+  }
+  if (!not_bound)
+    printf("\033[0;32mPass error check!\033[0m\n");
+  else
+    printf("\033[0;31mFail error check! Exceeding data count: %d\033[0m\n",
+           not_bound);
   cudaFree(d_cmpBytes);
   cudaFree(d_cmpBytesOut);
   cudaFree(d_decData);
