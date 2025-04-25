@@ -151,7 +151,6 @@ int main() {
   write_dataf("output", decData, nbEle);
 
   int not_bound = 0;
-  int j = 0;
   for (size_t i = 0; i < nbEle; i += 1) {
     if (fabs(vec[i] * 2 - decData[i]) > eb * 2.2) {
       not_bound++;

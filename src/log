@@ -1,0 +1,4 @@
+rank 1 send 250000 to 2
+rank 2 send 250000 to 3
+rank 0 send 250000 to 1
+rank 3 send 250000 to 0

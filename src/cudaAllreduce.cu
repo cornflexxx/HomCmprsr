@@ -2,9 +2,24 @@
 #include "../include/GSZ_entry.h"
 #include "../include/comprs_test.cuh"
 #include <cstddef>
+#include <cstdio>
 #include <cuda.h>
 #include <mpi.h>
 #include <stdio.h>
+
+#define MPI_call_check(call)                                                   \
+  {                                                                            \
+    int err_code = call;                                                       \
+    if (err_code != MPI_SUCCESS) {                                             \
+      char error_string[BUFSIZ];                                               \
+      int length_of_error_string;                                              \
+      MPI_Error_string(err_code, error_string, &length_of_error_string);       \
+      fprintf(stderr, "\nMPI error in line %d : %s\n", __LINE__,               \
+              error_string);                                                   \
+      fflush(stderr);                                                          \
+      MPI_Abort(MPI_COMM_WORLD, err_code);                                     \
+    }                                                                          \
+  }
 
 #define COLL_BASE_COMPUTE_BLOCKCOUNT(COUNT, NUM_BLOCKS, SPLIT_INDEX,           \
                                      EARLY_BLOCK_COUNT, LATE_BLOCK_COUNT)      \
@@ -16,7 +31,6 @@
 int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                   size_t count, MPI_Comm comm, float eb) {
   int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
-  void *ret_;
   int bsize, gsize;
   unsigned char *d_cmpSendBytes;
   unsigned char *d_cmpReduceBytes;
@@ -26,23 +40,21 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   cudaStreamCreate(&streamQuanPred);
   cudaStreamCreate(&streamComprs);
   cudaStreamCreate(&streamDecomprs);
-
   int *d_quant_predData;
   int early_segcount, late_segcount, split_rank, max_segcount;
   unsigned char *d_inbuf[2];
-  ptrdiff_t true_lb, true_extent, lb, extent;
   ptrdiff_t block_offset, max_real_segsize;
   MPI_Request reqs[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
 
   ret = MPI_Comm_rank(comm, &rank); // get rank
   if (MPI_SUCCESS != ret) {
     line = __LINE__;
-    goto error_hndl;
+    exit(1);
   }
   ret = MPI_Comm_size(comm, &size); // get size of comm
   if (MPI_SUCCESS != ret) {
     line = __LINE__;
-    goto error_hndl;
+    exit(1);
   }
 
   // if(rank == 0) {
@@ -90,7 +102,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float),
              cudaMemcpyDeviceToDevice); // copy data from send buffer to receive
                                         // buffer
-  short early_late = 0;
   /* Computation loop */
 
   /*
@@ -108,6 +119,9 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   Note that we must be careful when computing the beginning of buffers and
   for send operations and computation we must compute the exact block size.
   */
+
+  send_to = (rank + 1) % size;
+  recv_from = (rank + size - 1) % size;
   size_t cmpSize;
   inbi = 0;
   block_offset =
@@ -120,14 +134,17 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   GSZ_compress_deviceptr_outlier((d_rbuf + block_offset * sizeof(float)),
                                  d_cmpSendBytes, block_count, &cmpSize, eb,
                                  streamComprs); // compress data
-  MPI_Irecv(d_inbuf[inbi], max_segcount, MPI_BYTE, recv_from, 0, comm,
-            &reqs[inbi]); // recv compressed data
 
-  MPI_Send(d_cmpSendBytes, block_count, MPI_BYTE, send_to, 0, comm);
+  MPI_call_check(MPI_Irecv(d_inbuf[inbi], max_real_segsize, MPI_BYTE, recv_from,
+                           0, comm,
+                           &reqs[inbi])); // recv compressed data
 
+  cudaStreamSynchronize(streamComprs);
+
+  MPI_call_check(MPI_Send(d_cmpSendBytes, block_count * sizeof(float), MPI_BYTE,
+                          send_to, 0, comm));
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
-
     inbi = inbi ^ 0x1;
 
     block_offset = ((prevblock < split_rank)
@@ -149,18 +166,15 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     /* Wait on previous block to arrive */
     MPI_Wait(&reqs[inbi ^ 0x1], MPI_STATUS_IGNORE);
-
+    cudaStreamSynchronize(streamQuanPred);
     homomorphic_sum(d_inbuf[inbi ^ 0x1], d_quant_predData, d_cmpReduceBytes,
                     block_count, eb, 0, &cmpSize);
     /* Apply operation on previous block: result goes to rbuf
     rbuf[prevblock] = inbuf[inbi ^ 0x1] (op) rbuf[prevblock]
     */
-
     /* send previous block to send_to */
-    MPI_Send(d_cmpReduceBytes, block_count * sizeof(float), MPI_BYTE, send_to,
-             0, comm);
+    MPI_Send(d_cmpReduceBytes, max_real_segsize, MPI_BYTE, send_to, 0, comm);
   }
-
   /* Wait on the last block to arrive */
   MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE);
 
@@ -186,16 +200,11 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   for (k = 0; k < size - 1; k++) {
     const int recv_data_from = (rank + size - k) % size;
-    const int send_data_from = (rank + 1 + size - k) % size;
 
     const ptrdiff_t recv_block_offset =
         ((recv_data_from < split_rank)
              ? ((ptrdiff_t)recv_data_from * early_segcount)
              : ((ptrdiff_t)recv_data_from * late_segcount + split_rank));
-    const ptrdiff_t send_block_offset =
-        ((send_data_from < split_rank)
-             ? ((ptrdiff_t)send_data_from * early_segcount)
-             : ((ptrdiff_t)send_data_from * late_segcount + split_rank));
 
     block_count =
         ((recv_data_from < split_rank) ? early_segcount : late_segcount);
@@ -215,31 +224,5 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     inbi = inbi ^ 0x1;
   }
-
-  return MPI_SUCCESS;
-
-error_hndl:
-  fprintf(stderr, "\n%s:%4d\tRank %d Error occurred %d\n\n", __FILE__, line,
-          rank, ret);
-  MPI_Request_free(&reqs[0]);
-  MPI_Request_free(&reqs[1]);
-  (void)line; // silence compiler warning
-  if (NULL != d_cmpSendBytes) {
-    cudaFree(d_cmpSendBytes);
-  }
-  if (NULL != d_cmpReduceBytes) {
-    cudaFree(d_cmpReduceBytes);
-  }
-  if (NULL != d_quant_predData) {
-    cudaFree(d_quant_predData);
-  }
-  if (NULL != d_inbuf[0]) {
-    cudaFree(d_inbuf[0]);
-  }
-  if (NULL != d_inbuf[1]) {
-    cudaFree(d_inbuf[1]);
-  }
-  cudaStreamDestroy(streamQuanPred);
-  cudaStreamDestroy(streamComprs);
   return ret;
 }
