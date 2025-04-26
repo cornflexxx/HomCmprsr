@@ -4,7 +4,6 @@
 #include "../include/comprs_test.cuh"
 #include <cstddef>
 #include <cstdio>
-#include <iterator>
 #include <stdio.h>
 
 __device__ inline int quantization(float data, float recipPrecision) {

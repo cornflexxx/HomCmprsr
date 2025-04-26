@@ -76,8 +76,8 @@ void write_datai(const char *filename, int *data, size_t dim) {
 
 int main() {
   size_t nbEle;
-  float *vec = read_data("smooth.in", &nbEle);
-  float *vec_local = read_data("smooth.in", &nbEle);
+  float *vec = read_data("randwalk.in", &nbEle);
+  float *vec_local = read_data("randwalk.in", &nbEle);
   float eb = 1e-4;
   unsigned char *cmpBytes = NULL;
   float *decData;
@@ -118,7 +118,7 @@ int main() {
   */
   GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb,
                                  stream);
-
+  printf("cmpSize = %zu\n", cmpSize);
   float *d_localData;
   int *d_quantLocOut;
 
@@ -142,7 +142,7 @@ int main() {
 
   homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, eb, stream,
                   &cmpSize2);
-
+  printf("cmpSize2 = %zu\n", cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
                                    eb, stream);
 

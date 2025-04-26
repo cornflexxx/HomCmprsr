@@ -480,13 +480,11 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
                                     d_locOffsetCmp, d_cmpOffsetCmp,
                                     d_locOffsetDec, d_flag, d_flag_cmp,
                                     d_quantPredLoc, errorBound, nbEle);
-
   cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
   *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /
                                      (cmp_tblock_size * cmp_chunk) *
                                      (cmp_tblock_size * cmp_chunk) / 32;
-
   cudaFree(d_flag);
   cudaFree(d_flag_cmp);
   cudaFree(d_cmpOffsetDec);
