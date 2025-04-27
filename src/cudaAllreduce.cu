@@ -168,8 +168,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_cmpReduceBytes,
                   block_count, eb, 0, &cmpSize);
-  cudaStreamSynchronize(streamHomSum);
-
   cmpSizes[rank] = cmpSize;
   MPI_Alltoall(cmpSizes, 1, MPI_UNSIGNED_LONG_LONG, cmpSizes, 1,
                MPI_UNSIGNED_LONG_LONG, comm);
@@ -201,5 +199,17 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     inbi = inbi ^ 0x1;
   }
+  cudaStreamSynchronize(streamDecomprs);
+  cudaFree(d_cmpSendBytes);
+  cudaFree(d_cmpReduceBytes);
+  cudaFree(d_quant_predData);
+  cudaFree(d_inbuf[0]);
+  if (size > 2) {
+    cudaFree(d_inbuf[1]);
+  }
+  cudaStreamDestroy(streamComprs);
+  cudaStreamDestroy(streamDecomprs);
+  cudaStreamDestroy(streamHomSum);
+  cudaStreamDestroy(streamQuanPred);
   return 0;
 }
