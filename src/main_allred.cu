@@ -56,10 +56,12 @@ void write_dataf(const char *filename, float *data, size_t dim) {
 int main() {
   MPI_Init(NULL, NULL);
   size_t count;
-  int rank, size;
+  int rank, size, ndev;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   float *h_sbuf;
+  cudaGetDeviceCount(&ndev);
+  cudaSetDevice(rank % ndev);
   h_sbuf = read_data("smooth.in", &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
