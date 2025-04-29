@@ -3,7 +3,6 @@
 #include "../include/comprs_test.cuh"
 #include <cinttypes>
 #include <cstdio>
-
 /** ************************************************************************
  * @brief GSZ end-to-end compression API for host pointers
  *        Compression is executed in GPU.
@@ -253,7 +252,8 @@ void GSZ_decompress_deviceptr_plain(float *d_decData, unsigned char *d_cmpBytes,
  * *********************************************************************** */
 void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
                                     size_t nbEle, size_t *cmpSize,
-                                    float errorBound, cudaStream_t stream) {
+                                    float errorBound, int rank,
+                                    cudaStream_t stream) {
   // Data blocking.
   int bsize = cmp_tblock_size;
   int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
@@ -277,7 +277,7 @@ void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
   GSZ_compress_kernel_outlier<<<gridSize, blockSize, sizeof(unsigned int) * 2,
                                 stream>>>(d_oriData, d_cmpBytes, d_cmpOffset,
                                           d_locOffset, d_flag, errorBound,
-                                          nbEle);
+                                          nbEle, rank);
   // Obtain compression ratio and move data back to CPU.
   cudaMemcpy(&glob_sync, d_cmpOffset + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
@@ -444,7 +444,7 @@ void GSZ_decompress_deviceptr_outlier_vec(float *d_decData,
 
 void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
                      unsigned char *d_cmpByteOut, size_t nbEle,
-                     float errorBound, cudaStream_t stream, size_t *cmpSize) {
+                     float errorBound, size_t *cmpSize, cudaStream_t stream) {
   // Data blocking.
   int bsize = dec_tblock_size;
   int gsize = (nbEle + bsize * dec_chunk - 1) / (bsize * dec_chunk);
@@ -474,7 +474,6 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
   // GSZ GPU decompression.
   dim3 blockSize(bsize);
   dim3 gridSize(gsize);
-
   kernel_homomophic_sum<<<gridSize, blockSize, sizeof(unsigned int) * 2,
                           stream>>>(d_cmpBytesIn, d_cmpOffsetDec, d_cmpByteOut,
                                     d_locOffsetCmp, d_cmpOffsetCmp,
@@ -485,6 +484,7 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
   *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /
                                      (cmp_tblock_size * cmp_chunk) *
                                      (cmp_tblock_size * cmp_chunk) / 32;
+
   cudaFree(d_flag);
   cudaFree(d_flag_cmp);
   cudaFree(d_cmpOffsetDec);

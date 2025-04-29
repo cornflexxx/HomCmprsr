@@ -34,14 +34,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   int bsize, gsize;
   unsigned char *d_cmpSendBytes;
   unsigned char *d_cmpReduceBytes;
-  cudaStream_t streamQuanPred;
-  cudaStream_t streamDecomprs;
-  cudaStream_t streamComprs;
-  cudaStream_t streamHomSum;
-  cudaStreamCreate(&streamHomSum);
-  cudaStreamCreate(&streamQuanPred);
-  cudaStreamCreate(&streamComprs);
-  cudaStreamCreate(&streamDecomprs);
 
   int *d_quant_predData;
   int early_segcount, late_segcount, split_rank, max_segcount;
@@ -81,6 +73,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   cudaMalloc((void **)&d_cmpSendBytes, max_segcount * sizeof(float));
   cudaMalloc((void **)&d_quant_predData, max_segcount * sizeof(int));
+
   cudaMalloc((void **)&d_inbuf[0], max_real_segsize);
   if (size > 2) {
     cudaMalloc((void **)&d_inbuf[1], max_real_segsize);
@@ -101,24 +94,18 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
            ? ((ptrdiff_t)rank * (ptrdiff_t)early_segcount)
            : ((ptrdiff_t)rank * (ptrdiff_t)late_segcount + split_rank));
   block_count = ((rank < split_rank) ? early_segcount : late_segcount);
-
   /* Initialize first receive from the neighbor on the left */
-  GSZ_compress_deviceptr_outlier((d_rbuf + block_offset * sizeof(float)),
-                                 d_cmpSendBytes, block_count, &cmpSize, eb,
-                                 streamComprs); // compress data
+  GSZ_compress_deviceptr_outlier((d_rbuf + block_offset), d_cmpSendBytes,
+                                 block_count, &cmpSize, eb,
+                                 rank); // compress data
 
   MPI_call_check(MPI_Irecv(d_inbuf[inbi], max_real_segsize, MPI_BYTE, recv_from,
                            0, comm,
                            &reqs[inbi])); // recv compressed data
-
-  cudaStreamSynchronize(streamComprs);
-
   MPI_call_check(MPI_Send(d_cmpSendBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
-    cmpSize = 0;
-
     block_offset = ((prevblock < split_rank)
                         ? ((ptrdiff_t)prevblock * early_segcount)
                         : ((ptrdiff_t)prevblock * late_segcount + split_rank));
@@ -128,32 +115,24 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     dim3 grid(gsize);
     dim3 block(bsize);
     // d_rbuf + (ptrdiff_t)block_offset * extent;
-    kernel_quant_prediction<<<grid, block, 0, streamQuanPred>>>(
-        d_rbuf + block_offset * sizeof(float), d_quant_predData, eb,
-        block_count);
+    kernel_quant_prediction<<<grid, block>>>(d_rbuf + block_offset,
+                                             d_quant_predData, eb, block_count);
     /* Post irecv for the current block */
-
     MPI_Irecv(d_inbuf[inbi], max_real_segsize, MPI_BYTE, recv_from, 0, comm,
               &reqs[inbi]); // recv compressed data
 
     /* Wait on previous block to arrive */
     MPI_Wait(&reqs[inbi ^ 0x1], MPI_STATUS_IGNORE);
-    cudaStreamSynchronize(streamQuanPred);
 
     homomorphic_sum(d_inbuf[inbi ^ 0x1], d_quant_predData, d_cmpReduceBytes,
-                    block_count, eb, streamHomSum, &cmpSize);
-    /* Apply operation on previous block: result goes to rbuf
-    rbuf[prevblock] = inbuf[inbi ^ 0x1] (op) rbuf[prevblock]
-    */
-    /* send previous block to send_to */
-    cudaStreamSynchronize(streamHomSum);
+                    block_count, eb, &cmpSize);
+    MPI_Barrier(comm);
+
     MPI_call_check(
         MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
   }
-  /* Wait on the last block to arrive */
+
   MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE);
-  /* Apply operation on the last block (from neighbor (rank + 1)
-  rbuf[rank+1] = inbuf[inbi] (op) rbuf[rank + 1] */
   recv_from = (rank + 1) % size;
   block_offset = ((recv_from < split_rank)
                       ? ((ptrdiff_t)recv_from * early_segcount)
@@ -163,11 +142,12 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   gsize = (block_count + bsize * dec_chunk - 1) / (bsize * dec_chunk);
   dim3 grid(gsize);
   dim3 block(bsize);
-  kernel_quant_prediction<<<grid, block, 0, streamQuanPred>>>(
-      d_rbuf + block_offset * sizeof(float), d_quant_predData, eb, block_count);
+  kernel_quant_prediction<<<grid, block>>>(d_rbuf + block_offset,
+                                           d_quant_predData, eb, block_count);
 
   homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_cmpReduceBytes,
-                  block_count, eb, 0, &cmpSize);
+                  block_count, eb, &cmpSize);
+
   cmpSizes[rank] = cmpSize;
   MPI_Alltoall(cmpSizes, 1, MPI_UNSIGNED_LONG_LONG, cmpSizes, 1,
                MPI_UNSIGNED_LONG_LONG, comm);
@@ -193,23 +173,11 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     GSZ_decompress_deviceptr_outlier(d_rbuf + recv_block_offset * sizeof(float),
                                      d_inbuf[inbi], (size_t)block_count,
-                                     cmpSize, eb, streamDecomprs);
+                                     cmpSize, eb);
     cudaMemcpy(d_cmpReduceBytes, d_inbuf[inbi], cmpSize,
                cudaMemcpyDeviceToDevice);
 
     inbi = inbi ^ 0x1;
   }
-  cudaStreamSynchronize(streamDecomprs);
-  cudaFree(d_cmpSendBytes);
-  cudaFree(d_cmpReduceBytes);
-  cudaFree(d_quant_predData);
-  cudaFree(d_inbuf[0]);
-  if (size > 2) {
-    cudaFree(d_inbuf[1]);
-  }
-  cudaStreamDestroy(streamComprs);
-  cudaStreamDestroy(streamDecomprs);
-  cudaStreamDestroy(streamHomSum);
-  cudaStreamDestroy(streamQuanPred);
   return 0;
 }

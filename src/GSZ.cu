@@ -35,7 +35,7 @@ GSZ_compress_kernel_outlier(const float *const __restrict__ oriData,
                             volatile unsigned int *const __restrict__ cmpOffset,
                             volatile unsigned int *const __restrict__ locOffset,
                             volatile int *const __restrict__ flag,
-                            const float eb, const size_t nbEle) {
+                            const float eb, const size_t nbEle, int rank) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;
@@ -162,14 +162,12 @@ GSZ_compress_kernel_outlier(const float *const __restrict__ oriData,
       thread_ofs += temp_ofs2;
       temp_rate = fr2 | 0x80 | ((outlier - 1) << 5);
     }
-
     // Record block info and write block fixed rate to compressed data.
     fixed_rate[j] = temp_rate;
     cmpData[block_idx] = (unsigned char)fixed_rate[j];
     __syncthreads();
   }
-
-// Warp-level prefix-sum (inclusive), also thread-block-level.
+  // Warp-level prefix-sum (inclusive), also thread-block-level.
 #pragma unroll 5
   for (int i = 1; i < 32; i <<= 1) {
     int tmp = __shfl_up_sync(0xffffffff, thread_ofs, i);
@@ -239,7 +237,6 @@ GSZ_compress_kernel_outlier(const float *const __restrict__ oriData,
   if (!lane)
     base_idx = excl_sum + rate_ofs;
   __syncthreads();
-
   // Bit shuffle for each index, also storing data to global memory.
   unsigned int base_cmp_byte_ofs = base_idx;
   unsigned int cmp_byte_ofs;

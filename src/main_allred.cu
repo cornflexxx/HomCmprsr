@@ -2,6 +2,17 @@
 #include <cstddef>
 #include <stdio.h>
 #include <stdlib.h>
+
+#define CUDA_CHECK(call)                                                       \
+  do {                                                                         \
+    cudaError_t err = call;                                                    \
+    if (err != cudaSuccess) {                                                  \
+      fprintf(stderr, "CUDA error in file '%s' in line %i: %s.\n", __FILE__,   \
+              __LINE__, cudaGetErrorString(err));                              \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  } while (0)
+
 float *read_data(const char *filename, size_t *dim) {
   FILE *file = fopen(filename, "r");
   if (!file) {
@@ -59,9 +70,9 @@ int main() {
   int rank, size, ndev;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
+  int deviceCount;
+  CUDA_CHECK(cudaSetDevice(0));
   float *h_sbuf;
-  cudaGetDeviceCount(&ndev);
-  cudaSetDevice(rank % ndev);
   h_sbuf = read_data("smooth.in", &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;

@@ -2250,7 +2250,6 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
       int signed_value;
       maxQuan2 = 0;
       maxQuant = 0;
-
       signed_value =
           (sign_flag & (1 << (31))) ? absQuant[j * 32] * -1 : absQuant[j * 32];
       lorenQuant = signed_value + predQuant[base_block_start_idx];
@@ -2287,7 +2286,7 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
     __syncthreads();
     // Index updating across different iterations.
     cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
-  } // sembra funzionare fino a qui
+  }
 
 #pragma unroll 5
   for (int i = 1; i < 32; i <<= 1) {
@@ -2358,7 +2357,6 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
   if (!lane)
     base_idx = excl_sum + rate_ofs;
   __syncthreads();
-
   base_cmp_byte_ofs = base_idx;
   tmp_byte_ofs = 0;
   cur_byte_ofs = 0;
