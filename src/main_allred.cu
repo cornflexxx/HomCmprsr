@@ -79,10 +79,10 @@ int main() {
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
   cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
   cudaMalloc((void **)&d_rbuf, count * sizeof(float));
-  float eb = 0.5;
+  float eb = 0.0001;
   allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD, eb);
-  cudaMemcpy(h_rbuf, d_rbuf, count * sizeof(float), cudaMemcpyDeviceToHost);
   if (rank == 0) {
+    cudaMemcpy(h_rbuf, d_rbuf, count * sizeof(float), cudaMemcpyDeviceToHost);
     write_dataf("smooth.out", h_rbuf, count);
   }
   cudaFree(d_sbuf);

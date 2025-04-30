@@ -20,6 +20,15 @@
       MPI_Abort(MPI_COMM_WORLD, err_code);                                     \
     }                                                                          \
   }
+#define CUDA_CHECK(call)                                                       \
+  {                                                                            \
+    cudaError_t err = call;                                                    \
+    if (err != cudaSuccess) {                                                  \
+      fprintf(stderr, "CUDA error in file '%s' in line %i: %s.\n", __FILE__,   \
+              __LINE__, cudaGetErrorString(err));                              \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  }
 
 #define COLL_BASE_COMPUTE_BLOCKCOUNT(COUNT, NUM_BLOCKS, SPLIT_INDEX,           \
                                      EARLY_BLOCK_COUNT, LATE_BLOCK_COUNT)      \
@@ -73,16 +82,17 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   cudaMalloc((void **)&d_cmpSendBytes, max_segcount * sizeof(float));
   cudaMalloc((void **)&d_quant_predData, max_segcount * sizeof(int));
+  cudaMalloc((void **)&d_cmpReduceBytes, max_segcount * sizeof(float));
 
   cudaMalloc((void **)&d_inbuf[0], max_real_segsize);
   if (size > 2) {
     cudaMalloc((void **)&d_inbuf[1], max_real_segsize);
   }
+
   // TODO : check if d_sbuf == MPI_IN_PLACE
 
-  cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float),
-             cudaMemcpyDeviceToDevice); // copy data from send buffer to receive
-                                        // buffer
+  cudaMemcpy(d_rbuf, d_sbuf, count * sizeof(float), cudaMemcpyDeviceToDevice);
+
   /* Computation loop */
 
   send_to = (rank + 1) % size;
@@ -103,6 +113,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                            0, comm,
                            &reqs[inbi])); // recv compressed data
   MPI_call_check(MPI_Send(d_cmpSendBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
+
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
@@ -117,6 +128,7 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     // d_rbuf + (ptrdiff_t)block_offset * extent;
     kernel_quant_prediction<<<grid, block>>>(d_rbuf + block_offset,
                                              d_quant_predData, eb, block_count);
+
     /* Post irecv for the current block */
     MPI_Irecv(d_inbuf[inbi], max_real_segsize, MPI_BYTE, recv_from, 0, comm,
               &reqs[inbi]); // recv compressed data
@@ -125,14 +137,16 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     MPI_Wait(&reqs[inbi ^ 0x1], MPI_STATUS_IGNORE);
 
     homomorphic_sum(d_inbuf[inbi ^ 0x1], d_quant_predData, d_cmpReduceBytes,
-                    block_count, eb, &cmpSize);
-    MPI_Barrier(comm);
+                    block_count, rank, eb, &cmpSize);
 
     MPI_call_check(
         MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm));
   }
 
-  MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE);
+  MPI_Status status;
+  int count_;
+
+  MPI_call_check(MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE));
   recv_from = (rank + 1) % size;
   block_offset = ((recv_from < split_rank)
                       ? ((ptrdiff_t)recv_from * early_segcount)
@@ -144,40 +158,33 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   dim3 block(bsize);
   kernel_quant_prediction<<<grid, block>>>(d_rbuf + block_offset,
                                            d_quant_predData, eb, block_count);
-
   homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_cmpReduceBytes,
-                  block_count, eb, &cmpSize);
-
-  cmpSizes[rank] = cmpSize;
-  MPI_Alltoall(cmpSizes, 1, MPI_UNSIGNED_LONG_LONG, cmpSizes, 1,
-               MPI_UNSIGNED_LONG_LONG, comm);
+                  block_count, rank, eb, &cmpSize);
+  GSZ_decompress_deviceptr_outlier(d_rbuf + block_offset, d_cmpReduceBytes,
+                                   (size_t)block_count, cmpSize, eb);
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   for (k = 0; k < size - 1; k++) {
     const int recv_data_from = (rank + size - k) % size;
-
     const ptrdiff_t recv_block_offset =
         ((recv_data_from < split_rank)
              ? ((ptrdiff_t)recv_data_from * early_segcount)
              : ((ptrdiff_t)recv_data_from * late_segcount + split_rank));
-
     block_count =
         ((recv_data_from < split_rank) ? early_segcount : late_segcount);
 
     MPI_Irecv(d_inbuf[inbi], max_real_segsize, MPI_BYTE, recv_from, 0, comm,
               &reqs[inbi]);
 
-    MPI_Send(d_cmpReduceBytes, cmpSizes[send_to], MPI_BYTE, send_to, 0, comm);
+    MPI_Send(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0, comm);
 
-    MPI_Wait(&reqs[inbi], MPI_STATUS_IGNORE);
-
-    GSZ_decompress_deviceptr_outlier(d_rbuf + recv_block_offset * sizeof(float),
-                                     d_inbuf[inbi], (size_t)block_count,
-                                     cmpSize, eb);
+    MPI_Wait(&reqs[inbi], &status);
+    MPI_Get_count(&status, MPI_BYTE, &count_);
+    cmpSize = count_;
+    GSZ_decompress_deviceptr_outlier(d_rbuf + recv_block_offset, d_inbuf[inbi],
+                                     (size_t)block_count, cmpSize, eb);
     cudaMemcpy(d_cmpReduceBytes, d_inbuf[inbi], cmpSize,
                cudaMemcpyDeviceToDevice);
-
-    inbi = inbi ^ 0x1;
   }
   return 0;
 }

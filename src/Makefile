@@ -12,10 +12,9 @@ TARGET = main_hom
 SRC_2 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_allred.cu cudaAllreduce.cu
 TARGET_2 = main_allred
 
+compression: $(TARGET)
 
-main_hom: $(TARGET)
-
-main_allred: $(TARGET_2)
+allreduce: $(TARGET_2)
 
 $(TARGET_2): $(SRC_2)
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) $(SRC_2) -o $(TARGET_2) $(LIBS)

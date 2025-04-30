@@ -29,7 +29,7 @@ void GSZ_decompress_deviceptr_outlier_vec(float *d_decData,
                                           float errorBound,
                                           cudaStream_t stream = 0);
 void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
-                     unsigned char *d_cmpByteOut, size_t nbEle,
+                     unsigned char *d_cmpByteOut, size_t nbEle, int rank,
                      float errorBound, size_t *cmpSize,
                      cudaStream_t stream = 0);
 #endif // GSZ_INCLUDE_GSZ_ENTRY_H

@@ -1614,7 +1614,7 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
                       volatile int *const __restrict__ flag,
                       volatile int *const __restrict__ flag_cmp,
                       int *const __restrict__ predQuant, const float eb,
-                      const size_t nbEle) {
+                      const size_t nbEle, int rank) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;
@@ -1626,7 +1626,6 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
   const int rate_ofs = (nbEle + dec_tblock_size * dec_chunk - 1) /
                        (dec_tblock_size * dec_chunk) *
                        (dec_tblock_size * dec_chunk) / 32;
-
   int base_start_idx;
   int base_block_start_idx;
   unsigned int sign_flag_cmp[block_num];
@@ -1729,7 +1728,6 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
   if (!lane)
     base_idx = excl_sum + rate_ofs;
   __syncthreads();
-
   // Restore bit-shuffle for each block.
   unsigned int base_cmp_byte_ofs = base_idx;
   unsigned int cmp_byte_ofs;
@@ -1742,6 +1740,7 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
     int outlier_byte_num = ((fixed_rate[j] & 0x60) >> 5) + 1;
     fixed_rate[j] &= 0x1f;
     int outlier_buffer = 0;
+    fixed_rate_cmp[j] = 0;
     base_block_start_idx = base_start_idx + j * 1024 + lane * 32;
     unsigned int sign_flag = 0;
 
@@ -2268,6 +2267,7 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
         maxQuan2 = max(maxQuan2, absQuant[j * 32 + i]);
       }
     }
+
     int fr1 = get_bit_num(maxQuant);
     int fr2 = get_bit_num(maxQuan2);
     outlier = (get_bit_num(outlier) + 7) / 8;
@@ -2282,7 +2282,8 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
       temp_rate = fr2 | 0x80 | ((outlier - 1) << 5);
     }
     fixed_rate_cmp[j] = temp_rate;
-    CmpDataOut[base_block_start_idx / 32] = (unsigned char)fixed_rate_cmp[j];
+    CmpDataOut[(base_block_start_idx / 32)] =
+        (unsigned char)fixed_rate_cmp[j]; // ERROR
     __syncthreads();
     // Index updating across different iterations.
     cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
@@ -2910,6 +2911,7 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
              << 0);
       }
     }
+
     cur_byte_ofs += __shfl_sync(0xffffffff, tmp_byte_ofs, 31);
   }
 }

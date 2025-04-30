@@ -14,4 +14,4 @@ kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
                       volatile int *const __restrict__ flag,
                       volatile int *const __restrict__ flag_cmp,
                       int *const __restrict__ predQuant, const float eb,
-                      const size_t nbEle);
+                      const size_t nbEle, int rank);
