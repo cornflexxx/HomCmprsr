@@ -76,8 +76,8 @@ void write_datai(const char *filename, int *data, size_t dim) {
 
 int main() {
   size_t nbEle;
-  float *vec = read_data("randwalk.in", &nbEle);
-  float *vec_local = read_data("randwalk.in", &nbEle);
+  float *vec = read_data("randomwalk.in", &nbEle);
+  float *vec_local = read_data("randomwalk.in", &nbEle);
   float eb = 1e-4;
   unsigned char *cmpBytes = NULL;
   float *decData;
@@ -116,7 +116,7 @@ int main() {
     3. Apply homomoprhic sum kernel
     4. Decompress the data and write it to the output file
   */
-  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb,
+  GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb, 0,
                                  stream);
   printf("cmpSize = %zu\n", cmpSize);
   float *d_localData;
@@ -133,15 +133,15 @@ int main() {
   dim3 block(bsize);
 
   kernel_quant_prediction<<<grid, block>>>(d_localData, d_quantLocOut, eb,
-                                           nbEle);
+                                           nbEle, 0);
 
   unsigned char *d_cmpBytesOut;
   cudaMalloc((void **)&d_cmpBytesOut, nbEle * sizeof(float));
 
   size_t cmpSize2;
 
-  homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, eb, stream,
-                  &cmpSize2);
+  homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, 0, eb,
+                  &cmpSize2, stream);
   printf("cmpSize2 = %zu\n", cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
                                    eb, stream);

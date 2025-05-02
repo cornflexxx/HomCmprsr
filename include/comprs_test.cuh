@@ -1,11 +1,12 @@
 #pragma once
 
-__global__ void kernel_quant_prediction(float *const __restrict__ localData,
-                                        int *const __restrict__ quantPredData,
-                                        const float eb, const size_t nbEle);
+__global__ void
+kernel_quant_prediction(const float *const __restrict__ localData,
+                        int *const __restrict__ quantPredData, const float eb,
+                        const size_t nbEle, int rank);
 
 __global__ void
-kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
+kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
                       volatile unsigned int *const __restrict__ CmpOffsetIn,
                       unsigned char *const __restrict__ CmpDataOut,
                       volatile unsigned int *const __restrict__ locOffsetOut,

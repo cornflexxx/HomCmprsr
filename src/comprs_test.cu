@@ -1550,9 +1550,10 @@ __global__ void GSZ_decompress_kernel_outlier_vec(
 }
 
 // Quantization + Lorenzo Prediction
-__global__ void kernel_quant_prediction(float *const __restrict__ localData,
-                                        int *const __restrict__ quantPredData,
-                                        const float eb, const size_t nbEle) {
+__global__ void
+kernel_quant_prediction(const float *const __restrict__ localData,
+                        int *const __restrict__ quantPredData, const float eb,
+                        const size_t nbEle, int rank) {
   const int tid = threadIdx.x; // id of thread in block
   const int bid = blockIdx.x;
   const int idx = bid * blockDim.x + tid; // global id of thread
@@ -1565,9 +1566,6 @@ __global__ void kernel_quant_prediction(float *const __restrict__ localData,
   int base_block_start_idx, base_block_end_idx;
   int currQuant, prevQuant;
   float4 tmp_buffer;
-
-  // Prequantization + Lorenzo Prediction + Fixed-length encoding + store
-  // fixed-length to global memory.
   base_start_idx = warp * cmp_chunk * 32;
   for (int j = 0; j < block_num; j++) {
     // Block initilization.
@@ -1599,13 +1597,12 @@ __global__ void kernel_quant_prediction(float *const __restrict__ localData,
       tmp_buffer.w = currQuant - prevQuant;
       prevQuant = currQuant;
       quantPredData[i + 3] = tmp_buffer.w;
-      ;
     }
   }
 }
 
 __global__ void
-kernel_homomophic_sum(unsigned char *const __restrict__ CmpDataIn,
+kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
                       volatile unsigned int *const __restrict__ CmpOffsetIn,
                       unsigned char *const __restrict__ CmpDataOut,
                       volatile unsigned int *const __restrict__ locOffsetOut,
