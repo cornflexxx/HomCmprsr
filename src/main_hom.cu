@@ -76,8 +76,8 @@ void write_datai(const char *filename, int *data, size_t dim) {
 
 int main() {
   size_t nbEle;
-  float *vec = read_data("randomwalk.in", &nbEle);
-  float *vec_local = read_data("randomwalk.in", &nbEle);
+  float *vec = read_data("smooth.in", &nbEle);
+  float *vec_local = read_data("smooth.in", &nbEle);
   float eb = 1e-4;
   unsigned char *cmpBytes = NULL;
   float *decData;
@@ -145,7 +145,12 @@ int main() {
   printf("cmpSize2 = %zu\n", cmpSize2);
   GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
                                    eb, stream);
-
+  kernel_quant_prediction<<<grid, block>>>(d_decData, d_quantLocOut, eb, nbEle,
+                                           0);
+  homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, 0, eb,
+                  &cmpSize2);
+  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
+                                   eb, stream);
   cudaMemcpy(decData, d_decData, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
 
   write_dataf("output", decData, nbEle);
