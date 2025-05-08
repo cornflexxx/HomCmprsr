@@ -1,4 +1,4 @@
-#include "../include/AWcudaAllreduce.cuh"
+#include "../include/NonAWcudaAllreduce.cuh"
 #include <cstddef>
 #include <mpi.h>
 #include <stdio.h>
@@ -83,8 +83,8 @@ int main() {
   float *d_sbuf, *d_rbuf;
 
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
-  cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
   cudaMalloc((void **)&d_rbuf, count * sizeof(float));
+  cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
 
   float eb = 0.0001;
   cpuCopy_allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,

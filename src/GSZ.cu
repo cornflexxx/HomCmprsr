@@ -61,7 +61,6 @@ GSZ_compress_kernel_outlier(const float *const __restrict__ oriData,
   unsigned int thread_ofs = 0;
   float4 tmp_buffer;
   uchar4 tmp_char;
-
   // Prequantization + Lorenzo Prediction + Fixed-length encoding + store
   // fixed-length to global memory.
   base_start_idx = warp * cmp_chunk * 32;

@@ -267,7 +267,6 @@ void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
   int bsize = cmp_tblock_size;
   int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
   int cmpOffSize = gsize + 1;
-
   // Initializing global memory for GPU compression.
   unsigned int *d_cmpOffset;
   unsigned int *d_locOffset;
@@ -288,6 +287,7 @@ void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
                                           d_locOffset, d_flag, errorBound,
                                           nbEle, rank);
   // Obtain compression ratio and move data back to CPU.
+
   cudaMemcpy(&glob_sync, d_cmpOffset + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
   *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /
