@@ -4,3 +4,4 @@
 - Problema nell'output controlla righe 250'010... 
 - Scrivi l'Allgather sia cuda Aware che non.
 - Scrivi meglio homomrphic_sum ecc... (cambia nome, disposizione parametri più intuitiva)
+- Rimuovi rank e altre cose utilizzate per debug

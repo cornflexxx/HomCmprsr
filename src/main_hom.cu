@@ -76,8 +76,8 @@ void write_datai(const char *filename, int *data, size_t dim) {
 
 int main() {
   size_t nbEle;
-  float *vec = read_data("smooth.in", &nbEle);
-  float *vec_local = read_data("smooth.in", &nbEle);
+  float *vec = read_data("randomwalk.in", &nbEle);
+  float *vec_local = read_data("randomwalk.in", &nbEle);
   float eb = 1e-4;
   unsigned char *cmpBytes = NULL;
   float *decData;
@@ -88,7 +88,7 @@ int main() {
   float *d_decData;
   float *d_vec;
   unsigned char *d_cmpBytes;
-
+  size_t pad_nbEle = (nbEle + 32768 - 1) / 32768 * 32768;
   float max_val = vec[0];
   float min_val = vec[0];
   for (size_t i = 0; i < nbEle; i++) {
@@ -102,10 +102,10 @@ int main() {
   cudaStream_t stream;
   cudaStreamCreate(&stream);
 
-  cudaMalloc((void **)&d_vec, nbEle * sizeof(float));
-  cudaMemcpy(d_vec, vec, nbEle * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMalloc((void **)&d_decData, nbEle * sizeof(float));
-  cudaMalloc((void **)&d_cmpBytes, nbEle * sizeof(float));
+  cudaMalloc((void **)&d_vec, pad_nbEle * sizeof(float));
+  cudaMemcpy(d_vec, vec, pad_nbEle * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMalloc((void **)&d_decData, pad_nbEle * sizeof(float));
+  cudaMalloc((void **)&d_cmpBytes, pad_nbEle * sizeof(float));
 
   size_t cmpSize;
 
@@ -118,46 +118,45 @@ int main() {
   */
   GSZ_compress_deviceptr_outlier(d_vec, d_cmpBytes, nbEle, &cmpSize, eb, 0,
                                  stream);
-  printf("cmpSize = %zu\n", cmpSize);
   float *d_localData;
   int *d_quantLocOut;
 
-  cudaMalloc((void **)&d_localData, nbEle * sizeof(float));
-  cudaMemcpy(d_localData, vec_local, nbEle * sizeof(float),
+  cudaMalloc((void **)&d_localData, pad_nbEle * sizeof(float));
+  cudaMemcpy(d_localData, vec_local, pad_nbEle * sizeof(float),
              cudaMemcpyHostToDevice);
-  cudaMalloc((void **)&d_quantLocOut, nbEle * sizeof(int));
+  cudaMalloc((void **)&d_quantLocOut, pad_nbEle * sizeof(int));
 
   int bsize = dec_tblock_size;
   int gsize = (nbEle + bsize * dec_chunk - 1) / (bsize * dec_chunk);
   dim3 grid(gsize);
   dim3 block(bsize);
-
+  int *d_quantLocOut2;
+  cudaMalloc((void **)&d_quantLocOut2, pad_nbEle * sizeof(int));
   kernel_quant_prediction<<<grid, block>>>(d_localData, d_quantLocOut, eb,
                                            nbEle, 0);
-
   unsigned char *d_cmpBytesOut;
-  cudaMalloc((void **)&d_cmpBytesOut, nbEle * sizeof(float));
+  cudaMalloc((void **)&d_cmpBytesOut, pad_nbEle * sizeof(float));
 
   size_t cmpSize2;
 
   homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, 0, eb,
-                  &cmpSize2, stream);
-  printf("cmpSize2 = %zu\n", cmpSize2);
-  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
-                                   eb, stream);
-  kernel_quant_prediction<<<grid, block>>>(d_decData, d_quantLocOut, eb, nbEle,
-                                           0);
-  homomorphic_sum(d_cmpBytes, d_quantLocOut, d_cmpBytesOut, nbEle, 0, eb,
                   &cmpSize2);
-  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut, nbEle, cmpSize2,
-                                   eb, stream);
+  kernel_quant_prediction<<<grid, block>>>(d_localData, d_quantLocOut2, eb,
+                                           nbEle, 0);
+  unsigned char *d_cmpBytesOut2;
+  cudaMalloc((void **)&d_cmpBytesOut2, pad_nbEle * sizeof(float));
+
+  homomorphic_sum(d_cmpBytesOut, d_quantLocOut2, d_cmpBytesOut2, nbEle, 0, eb,
+                  &cmpSize2);
+  GSZ_decompress_deviceptr_outlier(d_decData, d_cmpBytesOut2, nbEle, cmpSize2,
+                                   eb);
   cudaMemcpy(decData, d_decData, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
 
   write_dataf("output", decData, nbEle);
 
   int not_bound = 0;
   for (size_t i = 0; i < nbEle; i += 1) {
-    if (fabs(vec[i] * 2 - decData[i]) > eb * 2.2) {
+    if (fabs(vec[i] * 3 - decData[i]) > eb * 3.3) {
       not_bound++;
     }
   }

@@ -1,10 +1,8 @@
-#include "../include/cudaAllreduce.cuh"
+#include "../include/AWcudaAllreduce.cuh"
 #include <cstddef>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define RANK_FILE(file, rank) file##rank
-#define EVAL(x) x
 #define CUDA_CHECK(call)                                                       \
   do {                                                                         \
     cudaError_t err = call;                                                    \
@@ -80,7 +78,6 @@ int main() {
   h_sbuf = read_data("smooth.in", &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
-
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
   cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
   cudaMalloc((void **)&d_rbuf, count * sizeof(float));

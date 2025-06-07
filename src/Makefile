@@ -9,7 +9,7 @@ LIBS = -lcudart
 SRC = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_hom.cu 
 TARGET = main_hom
 
-SRC_2 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_allred.cu cudaAllreduce.cu
+SRC_2 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_allred.cu AWcudaAllreduce.cu
 TARGET_2 = main_allred
 
 SRC_3 = GSZ_entry.cu GSZ_timer.cu comprs_test.cu GSZ.cu  main_naw_allred.cu NonAWcudaAllreduce.cu

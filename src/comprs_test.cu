@@ -1641,7 +1641,6 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
   for (int j = 0; j < block_num; j++) {
     block_idx = warp * dec_chunk + j * 32 + lane;
     fixed_rate[j] = (int)CmpDataIn[block_idx];
-
     // Encoding selection.
     int encoding_selection = fixed_rate[j] >> 7; // use outlier encoding or not
     int outlier = ((fixed_rate[j] & 0x60) >> 5) +
@@ -1738,6 +1737,7 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
     fixed_rate[j] &= 0x1f;
     int outlier_buffer = 0;
     fixed_rate_cmp[j] = 0;
+    sign_flag_cmp[j] = 0;
     base_block_start_idx = base_start_idx + j * 1024 + lane * 32;
     unsigned int sign_flag = 0;
 
@@ -2243,21 +2243,20 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
                                  << (fixed_rate[j] - 1);
       }
       //  Decompress and sum with predQuant.
-      int signed_value;
       maxQuan2 = 0;
       maxQuant = 0;
-      signed_value =
-          (sign_flag & (1 << (31))) ? absQuant[j * 32] * -1 : absQuant[j * 32];
-      lorenQuant = signed_value + predQuant[base_block_start_idx];
+      lorenQuant = ((sign_flag & (1 << (31))) ? absQuant[j * 32] * -1
+                                              : absQuant[j * 32]) +
+                   predQuant[base_block_start_idx];
       sign_flag_cmp[j] |= (lorenQuant < 0) << 31;
       absQuant[j * 32] = abs(lorenQuant);
       maxQuant = max(maxQuant, absQuant[j * 32]);
       outlier = absQuant[j * 32];
       // TODO: unroll
       for (int i = 1; i < 32; i++) {
-        signed_value = (sign_flag & (1 << (31 - i))) ? absQuant[j * 32 + i] * -1
-                                                     : absQuant[j * 32 + i];
-        lorenQuant = signed_value + predQuant[base_block_start_idx + i];
+        lorenQuant = ((sign_flag & (1 << (31 - i))) ? absQuant[j * 32 + i] * -1
+                                                    : absQuant[j * 32 + i]) +
+                     predQuant[base_block_start_idx + i];
         sign_flag_cmp[j] |= (lorenQuant < 0) << (31 - i);
         absQuant[j * 32 + i] = abs(lorenQuant);
         maxQuant = max(maxQuant, absQuant[j * 32 + i]);
