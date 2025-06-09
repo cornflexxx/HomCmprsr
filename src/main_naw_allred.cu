@@ -1,11 +1,9 @@
-#include "../include/NonAWcudaAllreduce.cuh"
+#include "../include/nca_allreduce.cuh"
 #include <cstddef>
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define RANK_FILE(file, rank) file##rank
-#define EVAL(x) x
 #define CUDA_CHECK(call)                                                       \
   do {                                                                         \
     cudaError_t err = call;                                                    \

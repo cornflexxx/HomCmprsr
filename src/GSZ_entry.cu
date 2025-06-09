@@ -261,8 +261,7 @@ void GSZ_decompress_deviceptr_plain(float *d_decData, unsigned char *d_cmpBytes,
  * *********************************************************************** */
 void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
                                     size_t nbEle, size_t *cmpSize,
-                                    float errorBound, int rank,
-                                    cudaStream_t stream) {
+                                    float errorBound, cudaStream_t stream) {
   // Data blocking.
   int bsize = cmp_tblock_size;
   int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
@@ -285,7 +284,7 @@ void GSZ_compress_deviceptr_outlier(float *d_oriData, unsigned char *d_cmpBytes,
   GSZ_compress_kernel_outlier<<<gridSize, blockSize, sizeof(unsigned int) * 2,
                                 stream>>>(d_oriData, d_cmpBytes, d_cmpOffset,
                                           d_locOffset, d_flag, errorBound,
-                                          nbEle, rank);
+                                          nbEle);
   // Obtain compression ratio and move data back to CPU.
 
   cudaMemcpy(&glob_sync, d_cmpOffset + cmpOffSize - 2, sizeof(unsigned int),
@@ -454,7 +453,7 @@ void GSZ_decompress_deviceptr_outlier_vec(float *d_decData,
 }
 
 void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
-                     unsigned char *d_cmpByteOut, size_t nbEle, int rank,
+                     unsigned char *d_cmpByteOut, size_t nbEle,
                      float errorBound, size_t *cmpSize, cudaStream_t stream) {
   int bsize = cmp_tblock_size;
   int gsize = (nbEle + bsize * cmp_chunk - 1) / (bsize * cmp_chunk);
@@ -486,7 +485,7 @@ void homomorphic_sum(unsigned char *d_cmpBytesIn, int *d_quantPredLoc,
                           stream>>>(d_cmpBytesIn, d_cmpOffsetDec, d_cmpByteOut,
                                     d_locOffsetCmp, d_cmpOffsetCmp,
                                     d_locOffsetDec, d_flag, d_flag_cmp,
-                                    d_quantPredLoc, errorBound, nbEle, rank);
+                                    d_quantPredLoc, errorBound, nbEle);
   cudaMemcpy(&glob_sync, d_cmpOffsetCmp + cmpOffSize - 2, sizeof(unsigned int),
              cudaMemcpyDeviceToHost);
   *cmpSize = (size_t)glob_sync + (nbEle + cmp_tblock_size * cmp_chunk - 1) /

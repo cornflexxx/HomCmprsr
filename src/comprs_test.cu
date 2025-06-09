@@ -1553,7 +1553,7 @@ __global__ void GSZ_decompress_kernel_outlier_vec(
 __global__ void
 kernel_quant_prediction(const float *const __restrict__ localData,
                         int *const __restrict__ quantPredData, const float eb,
-                        const size_t nbEle, int rank) {
+                        const size_t nbEle) {
   const int tid = threadIdx.x; // id of thread in block
   const int bid = blockIdx.x;
   const int idx = bid * blockDim.x + tid; // global id of thread
@@ -1611,7 +1611,7 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
                       volatile int *const __restrict__ flag,
                       volatile int *const __restrict__ flag_cmp,
                       int *const __restrict__ predQuant, const float eb,
-                      const size_t nbEle, int rank) {
+                      const size_t nbEle) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;

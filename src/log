@@ -1,6 +1,0 @@
-rank 0, (Initial) block_offset_elements 0, block_count 333332
-rank 0, early_segcount 333332, late_segcount 333332, split_rank 0
-rank 2, (Initial) block_offset_elements 666664, block_count 333332
-rank 2, early_segcount 333332, late_segcount 333332, split_rank 0
-rank 1, (Initial) block_offset_elements 333332, block_count 333332
-rank 1, early_segcount 333332, late_segcount 333332, split_rank 0

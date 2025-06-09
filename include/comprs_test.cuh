@@ -3,7 +3,7 @@
 __global__ void
 kernel_quant_prediction(const float *const __restrict__ localData,
                         int *const __restrict__ quantPredData, const float eb,
-                        const size_t nbEle, int rank);
+                        const size_t nbEle);
 
 __global__ void
 kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
@@ -15,4 +15,4 @@ kernel_homomophic_sum(const unsigned char *const __restrict__ CmpDataIn,
                       volatile int *const __restrict__ flag,
                       volatile int *const __restrict__ flag_cmp,
                       int *const __restrict__ predQuant, const float eb,
-                      const size_t nbEle, int rank);
+                      const size_t nbEle);

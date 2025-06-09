@@ -35,7 +35,7 @@ GSZ_compress_kernel_outlier(const float *const __restrict__ oriData,
                             volatile unsigned int *const __restrict__ cmpOffset,
                             volatile unsigned int *const __restrict__ locOffset,
                             volatile int *const __restrict__ flag,
-                            const float eb, const size_t nbEle, int rank) {
+                            const float eb, const size_t nbEle) {
   __shared__ unsigned int excl_sum;
   __shared__ unsigned int base_idx;
   const int tid = threadIdx.x;
