@@ -44,7 +44,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                   size_t count, MPI_Comm comm, float eb) {
   int ret, line, rank, size, k, recv_from, send_to, block_count, inbi;
   int bsize, gsize;
-  unsigned char *d_cmpSendBytes;
   unsigned char *d_cmpReduceBytes;
   float *d_rtmpbuf;
 
@@ -64,8 +63,8 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     return MPI_SUCCESS;
   }
 
-  // size_t pad_nbEle = (count + 32768 - 1) / 32768 * 32768;
-  COLL_BASE_COMPUTE_BLOCKCOUNT(count, size, split_rank, early_segcount,
+  size_t pad_nbEle = (count + 32768 - 1) / 32768 * 32768;
+  COLL_BASE_COMPUTE_BLOCKCOUNT(pad_nbEle, size, split_rank, early_segcount,
                                late_segcount);
   early_segcount = (early_segcount % 4 == 0)
                        ? early_segcount
@@ -80,8 +79,6 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   size_t padded_count =
       early_segcount * split_rank + late_segcount * (size - split_rank);
   CUDA_CHECK(cudaMalloc((void **)&d_rtmpbuf, padded_count * sizeof(float)));
-  CUDA_CHECK(
-      cudaMalloc((void **)&d_cmpSendBytes, max_segcount * sizeof(float)));
   CUDA_CHECK(
       cudaMalloc((void **)&d_quant_predData, max_segcount * sizeof(int)));
   CUDA_CHECK(
@@ -105,12 +102,12 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                             ((ptrdiff_t)rank - split_rank) * late_segcount);
   block_count = ((rank < split_rank) ? early_segcount : late_segcount);
 
-  GSZ_compress_deviceptr_outlier(d_rtmpbuf + block_offset, d_cmpSendBytes,
+  GSZ_compress_deviceptr_outlier(d_rtmpbuf + block_offset, d_cmpReduceBytes,
                                  block_count, &cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
   MPI_call_check(MPI_Irecv(d_inbuf[inbi], max_real_segsize, MPI_BYTE, recv_from,
                            0, comm, &reqs[inbi]));
-  MPI_call_check(MPI_Send(d_cmpSendBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
+  MPI_call_check(MPI_Send(d_cmpReduceBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
                           send_to, 0, comm));
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;

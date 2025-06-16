@@ -71,9 +71,6 @@ int main() {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  int deviceCount;
-  CUDA_CHECK(cudaSetDevice(0));
-
   float *h_sbuf;
   h_sbuf = read_data("smooth.in", &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));

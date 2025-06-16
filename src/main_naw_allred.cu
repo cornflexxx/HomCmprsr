@@ -79,14 +79,19 @@ int main() {
   h_sbuf = read_data("smooth.in", &count);
   float *h_rbuf = (float *)malloc(count * sizeof(float));
   float *d_sbuf, *d_rbuf;
+  double t1, t2;
 
   cudaMalloc((void **)&d_sbuf, count * sizeof(float));
   cudaMalloc((void **)&d_rbuf, count * sizeof(float));
   cudaMemcpy(d_sbuf, h_sbuf, count * sizeof(float), cudaMemcpyHostToDevice);
-
+  t1 = MPI_Wtime();
   float eb = 0.0001;
   cpuCopy_allreduce_ring_comprs_hom_sum(d_sbuf, d_rbuf, count, MPI_COMM_WORLD,
                                         eb);
+  t2 = MPI_Wtime();
+  if (rank == 0) {
+    printf("Time taken for allreduce: %f seconds\n", t2 - t1);
+  }
   cudaMemcpy(h_rbuf, d_rbuf, count * sizeof(float), cudaMemcpyDeviceToHost);
   if (rank == 0) {
     write_dataf("smooth.out", h_rbuf, count);

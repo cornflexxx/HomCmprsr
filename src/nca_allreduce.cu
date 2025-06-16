@@ -46,18 +46,19 @@
 int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                           size_t count, MPI_Comm comm,
                                           float eb) {
-  int rank, size, k, recv_from, send_to, block_count, inbi;
+  int rank, size, k, recv_from, send_to, block_count, inbi, count_,
+      early_segcount, late_segcount, split_rank, max_segcount;
   int bsize, gsize;
-  unsigned char *cmpSendBytes;
+
   unsigned char *cmpReduceBytes;
-  unsigned char *d_cmpSendBytes;
   unsigned char *d_cmpReduceBytes;
+  unsigned char *inbuf[2];
+  unsigned char *d_tmpbuf;
+
+  cudaStream_t decomp_stream;
+  cudaStreamCreate(&decomp_stream);
 
   int *d_quant_predData;
-  int early_segcount, late_segcount, split_rank, max_segcount;
-  unsigned char *inbuf[2];
-
-  unsigned char *d_tmpbuf;
   float *d_rtmpbuf;
   ptrdiff_t block_offset_elements;
   size_t max_real_segsize_bytes;
@@ -67,7 +68,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   MPI_Comm_size(comm, &size);
 
   MPI_Status status;
-  int count_;
 
   if (1 == size) {
 
@@ -87,60 +87,19 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   max_segcount = early_segcount;
   max_real_segsize_bytes = max_segcount * sizeof(float);
 
-  // Alloca memoria host allineata
-  /*
-  if (posix_memalign((void **)&cmpSendBytes, ALIGNMENT,
-                     max_real_segsize_bytes) != 0) {
-    fprintf(stderr, "Error allocating aligned host memory.\n");
-    exit(EXIT_FAILURE);
-  }
-  if (posix_memalign((void **)&cmpReduceBytes, ALIGNMENT,
-                     max_real_segsize_bytes) != 0) {
-    fprintf(stderr, "Error allocating aligned host memory.\n");
-    exit(EXIT_FAILURE);
-  }
-  if (posix_memalign((void **)&inbuf[0], ALIGNMENT, max_real_segsize_bytes) !=
-      0) {
-    fprintf(stderr, "Error allocating aligned host memory.\n");
-    exit(EXIT_FAILURE);
-  }
-  if (size > 2) {
-    if (posix_memalign((void **)&inbuf[1], ALIGNMENT, max_real_segsize_bytes) !=
-        0) {
-      fprintf(stderr, "Error allocating aligned host memory.\n");
-      exit(EXIT_FAILURE);
-    }
-  }*/
-  cmpSendBytes = (unsigned char *)malloc(max_real_segsize_bytes);
-  if (cmpSendBytes == NULL) {
-    fprintf(stderr, "Error allocating host memory for cmpSendBytes.\n");
-    exit(EXIT_FAILURE);
-  }
+  // Host memory allocation
   cmpReduceBytes = (unsigned char *)malloc(max_real_segsize_bytes);
-  if (cmpReduceBytes == NULL) {
-    fprintf(stderr, "Error allocating host memory for cmpReduceBytes.\n");
-    exit(EXIT_FAILURE);
-  }
   inbuf[0] = (unsigned char *)malloc(max_real_segsize_bytes);
-  if (inbuf[0] == NULL) {
-    fprintf(stderr, "Error allocating host memory for inbuf[0].\n");
-    exit(EXIT_FAILURE);
-  }
   if (size > 2) {
     inbuf[1] = (unsigned char *)malloc(max_real_segsize_bytes);
-    if (inbuf[1] == NULL) {
-      fprintf(stderr, "Error allocating host memory for inbuf[1].\n");
-      exit(EXIT_FAILURE);
-    }
   }
 
   size_t padded_count_elements = (size_t)split_rank * early_segcount +
                                  (size_t)(size - split_rank) * late_segcount;
   size_t padded_count_bytes = padded_count_elements * sizeof(float);
 
+  // device memory allocation
   CUDA_CHECK(cudaMalloc((void **)&d_rtmpbuf, padded_count_bytes));
-  CUDA_CHECK(
-      cudaMalloc((void **)&d_cmpSendBytes, max_segcount * sizeof(float)));
   CUDA_CHECK(
       cudaMalloc((void **)&d_quant_predData, max_segcount * sizeof(int)));
   CUDA_CHECK(
@@ -166,15 +125,15 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
   float *d_rbuf_ = d_rtmpbuf + block_offset_elements;
 
-  GSZ_compress_deviceptr_outlier(d_rbuf_, d_cmpSendBytes, block_count, &cmpSize,
-                                 eb);
+  GSZ_compress_deviceptr_outlier(d_rbuf_, d_cmpReduceBytes, block_count,
+                                 &cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
-  CUDA_CHECK(cudaMemcpy(cmpSendBytes, d_cmpSendBytes, cmpSize + (cmpSize * 0.1),
-                        cudaMemcpyDeviceToHost));
+  CUDA_CHECK(cudaMemcpy(cmpReduceBytes, d_cmpReduceBytes,
+                        cmpSize + (cmpSize * 0.1), cudaMemcpyDeviceToHost));
 
   MPI_call_check(MPI_Irecv(inbuf[inbi], max_real_segsize_bytes, MPI_BYTE,
                            recv_from, 0, comm, &reqs[inbi]));
-  MPI_call_check(MPI_Send(cmpSendBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
+  MPI_call_check(MPI_Send(cmpReduceBytes, cmpSize + (cmpSize * 0.1), MPI_BYTE,
                           send_to, 0, comm));
 
   for (k = 2; k < size; k++) {
@@ -206,6 +165,7 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     MPI_call_check(MPI_Wait(&reqs[inbi ^ 0x1], &status));
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = (size_t)count_;
+
     CUDA_CHECK(cudaMemcpy(d_tmpbuf, inbuf[inbi ^ 0x1], cmpSize,
                           cudaMemcpyHostToDevice));
 
@@ -274,13 +234,13 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
 
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset_elements,
                                      d_cmpReduceBytes, (size_t)block_count,
-                                     cmpSize, eb);
+                                     cmpSize, eb, decomp_stream);
   }
 
+  CUDA_CHECK(cudaStreamSynchronize(decomp_stream));
   CUDA_CHECK(cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
                         cudaMemcpyDeviceToDevice));
 
-  free(cmpSendBytes);
   free(cmpReduceBytes);
   free(inbuf[0]);
   if (size > 2) {
@@ -288,7 +248,6 @@ int cpuCopy_allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   }
 
   CUDA_CHECK(cudaFree(d_rtmpbuf));
-  CUDA_CHECK(cudaFree(d_cmpSendBytes));
   CUDA_CHECK(cudaFree(d_quant_predData));
   CUDA_CHECK(cudaFree(d_cmpReduceBytes));
   CUDA_CHECK(cudaFree(d_tmpbuf));
