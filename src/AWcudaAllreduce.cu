@@ -112,11 +112,12 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   for (k = 2; k < size; k++) {
     const int prevblock = (rank + size - k + 1) % size;
     inbi = inbi ^ 0x1;
-    block_offset = ((rank < split_rank)
-                        ? ((ptrdiff_t)rank * (ptrdiff_t)early_segcount)
-                        : (ptrdiff_t)split_rank * early_segcount +
-                              ((ptrdiff_t)rank - split_rank) * late_segcount);
-    block_count = ((rank < split_rank) ? early_segcount : late_segcount);
+    block_offset =
+        ((prevblock < split_rank)
+             ? ((ptrdiff_t)prevblock * (ptrdiff_t)early_segcount)
+             : (ptrdiff_t)split_rank * early_segcount +
+                   ((ptrdiff_t)prevblock - split_rank) * late_segcount);
+    block_count = ((prevblock < split_rank) ? early_segcount : late_segcount);
     bsize = dec_tblock_size;
     gsize = (block_count + bsize * dec_chunk - 1) / (bsize * dec_chunk);
     dim3 grid(gsize);
@@ -139,11 +140,12 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
   }
   MPI_call_check(MPI_Wait(&reqs[inbi], &status));
   recv_from = (rank + 1) % size;
-  block_offset = ((rank < split_rank)
-                      ? ((ptrdiff_t)rank * (ptrdiff_t)early_segcount)
-                      : (ptrdiff_t)split_rank * early_segcount +
-                            ((ptrdiff_t)rank - split_rank) * late_segcount);
-  block_count = ((rank < split_rank) ? early_segcount : late_segcount);
+  block_offset =
+      ((recv_from < split_rank)
+           ? ((ptrdiff_t)recv_from * (ptrdiff_t)early_segcount)
+           : (ptrdiff_t)split_rank * early_segcount +
+                 ((ptrdiff_t)recv_from - split_rank) * late_segcount);
+  block_count = ((recv_from < split_rank) ? early_segcount : late_segcount);
   bsize = dec_tblock_size;
   gsize = (block_count + bsize * dec_chunk - 1) / (bsize * dec_chunk);
   dim3 grid(gsize);
@@ -153,16 +155,17 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
                                            d_quant_predData, eb, block_count);
   CUDA_CHECK(cudaGetLastError());
 
-  homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_cmpReduceBytes,
+  homomorphic_sum(d_inbuf[inbi], d_quant_predData, d_inbuf[inbi ^ 0x1],
                   block_count, eb, &cmpSize);
   CUDA_CHECK(cudaGetLastError());
-  GSZ_decompress_deviceptr_outlier(d_rtmpbuf + block_offset, d_cmpReduceBytes,
-                                   block_count, cmpSize, eb);
+  GSZ_decompress_deviceptr_outlier(
+      d_rtmpbuf + block_offset, d_inbuf[inbi ^ 0x1], block_count, cmpSize, eb);
   CUDA_CHECK(cudaGetLastError());
   cmpSize = cmpSize + (cmpSize * 0.1);
   send_to = (rank + 1) % size;
   recv_from = (rank + size - 1) % size;
   for (k = 0; k < size - 1; k++) {
+    inbi = inbi ^ 0x1;
     const int recv_data_from = (rank + size - k) % size;
     const ptrdiff_t recv_block_offset =
         ((recv_data_from < split_rank)
@@ -172,17 +175,16 @@ int allreduce_ring_comprs_hom_sum(const float *d_sbuf, float *d_rbuf,
     block_count =
         ((recv_data_from < split_rank) ? early_segcount : late_segcount);
 
-    MPI_call_check(MPI_Sendrecv(d_cmpReduceBytes, cmpSize, MPI_BYTE, send_to, 0,
-                                d_inbuf[inbi], max_real_segsize, MPI_BYTE,
+    MPI_call_check(MPI_Sendrecv(d_inbuf[inbi], cmpSize, MPI_BYTE, send_to, 0,
+                                d_inbuf[inbi ^ 0x1], max_real_segsize, MPI_BYTE,
                                 recv_from, 0, comm, &status));
 
     MPI_Get_count(&status, MPI_BYTE, &count_);
     cmpSize = count_;
     GSZ_decompress_deviceptr_outlier(d_rtmpbuf + recv_block_offset,
-                                     d_inbuf[inbi], (size_t)block_count,
+                                     d_inbuf[inbi ^ 0x1], (size_t)block_count,
                                      cmpSize, eb);
-    cudaMemcpy(d_cmpReduceBytes, d_inbuf[inbi], cmpSize,
-               cudaMemcpyDeviceToDevice);
+    CUDA_CHECK(cudaGetLastError());
   }
   cudaMemcpy(d_rbuf, d_rtmpbuf, count * sizeof(float),
              cudaMemcpyDeviceToDevice);

@@ -72,7 +72,6 @@ int main() {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  int deviceCount;
   CUDA_CHECK(cudaSetDevice(0));
 
   float *h_sbuf;
